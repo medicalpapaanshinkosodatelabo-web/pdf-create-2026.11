@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>プロフェッショナル フォト to PDF コンバーター</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500&display=swap');
+        body { font-family: 'Noto Sans JP', sans-serif; background-color: #f1f5f9; }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white shadow-lg rounded-2xl p-6 md:p-12 border border-slate-200">
+        <header class="mb-10 text-center">
+            <h1 class="text-3xl font-semibold text-slate-800">プロフェッショナル PDF コンバーター</h1>
+            <p class="text-slate-500 mt-3">写真のサイズに完全フィットさせ、余白なしでフル出力します。</p>
+        </header>
+
+        <div class="space-y-8">
+            <div id="drop-zone" class="border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center hover:border-slate-400 transition cursor-pointer bg-slate-50" onclick="document.getElementById('file-input').click()">
+                <p class="text-slate-600 font-medium text-lg">写真を選択 (複数選択可・大量画像対応)</p>
+                <input type="file" id="file-input" multiple accept="image/*" class="hidden">
+            </div>
+
+            <div id="status-area" class="text-center text-slate-600 font-medium hidden"></div>
+
+            <div id="controls" class="hidden pt-8 border-t flex flex-col sm:flex-row gap-4">
+                <button id="clear-btn" class="px-8 py-3 rounded-xl text-slate-600 hover:bg-slate-100 transition font-medium">クリア</button>
+                <button id="generate-btn" class="flex-1 bg-slate-700 hover:bg-slate-800 text-white px-8 py-3 rounded-xl shadow-lg transition font-medium">PDFを作成する</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const controls = document.getElementById('controls');
+        const statusArea = document.getElementById('status-area');
+        let selectedFiles = [];
+
+        fileInput.addEventListener('change', (e) => {
+            selectedFiles = Array.from(e.target.files);
+            if (selectedFiles.length > 0) {
+                controls.classList.remove('hidden');
+                statusArea.classList.remove('hidden');
+                statusArea.innerText = `${selectedFiles.length}枚の画像が選択されました。`;
+            }
+        });
+
+        document.getElementById('clear-btn').addEventListener('click', () => {
+            selectedFiles = [];
+            controls.classList.add('hidden');
+            statusArea.classList.add('hidden');
+            fileInput.value = '';
+        });
+
+        document.getElementById('generate-btn').addEventListener('click', async () => {
+            const { jsPDF } = window.jspdf;
+            let doc = null;
+            const generateBtn = document.getElementById('generate-btn');
+            
+            generateBtn.disabled = true;
+            generateBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            statusArea.innerText = "PDF生成中... 処理には数秒〜数十秒かかる場合があります";
+
+            try {
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    statusArea.innerText = `PDF生成中... (${i + 1} / ${selectedFiles.length} 枚目)`;
+                    
+                    const imgData = await readFileAsDataURL(selectedFiles[i]);
+                    const imgProps = await getImagePropsAsync(imgData);
+
+                    // ピクセル(px)をmmに変換 (1px ≈ 0.264583mm)
+                    const widthMm = imgProps.width * 0.264583;
+                    const heightMm = imgProps.height * 0.264583;
+
+                    const orientation = widthMm > heightMm ? 'l' : 'p';
+
+                    if (i === 0) {
+                        doc = new jsPDF({
+                            orientation: orientation,
+                            unit: 'mm',
+                            format: [widthMm, heightMm],
+                            compress: true
+                        });
+                    } else {
+                        doc.addPage([widthMm, heightMm], orientation);
+                    }
+
+                    doc.addImage(imgData, 'JPEG', 0, 0, widthMm, heightMm, undefined, 'FAST');
+                    
+                    // 大量処理時にUIフリーズを防ぐための一時中断
+                    if (i % 5 === 0) {
+                        await new Promise(resolve => setTimeout(resolve, 10));
+                    }
+                }
+                
+                if (doc) {
+                    statusArea.innerText = "ファイルを出力中...";
+                    
+                    // Blobを作成して明確にダウンロードをトリガーする
+                    const blob = doc.output('blob');
+                    const blobUrl = URL.createObjectURL(blob);
+                    
+                    const downloadLink = document.createElement('a');
+                    downloadLink.href = blobUrl;
+                    downloadLink.download = 'fullsize-photos.pdf';
+                    document.body.appendChild(downloadLink);
+                    downloadLink.click();
+                    document.body.removeChild(downloadLink);
+                    
+                    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+
+                    statusArea.innerText = "PDFのダウンロードが完了しました！";
+                }
+            } catch (err) {
+                console.error("PDF生成中にエラーが発生しました:", err);
+                statusArea.innerText = "エラーが発生しました。画像の枚数を減らすか、別の画像でお試しください。";
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        });
+
+        function readFileAsDataURL(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function getImagePropsAsync(imgData) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    resolve({ width: img.width, height: img.height });
+                };
+                img.onerror = reject;
+                img.src = imgData;
+            });
+        }
+    </script>
+</body>
+</html>
